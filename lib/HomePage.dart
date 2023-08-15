@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:audioplayers/audioplayers.dart';
-import 'package:flutter_svg/flutter_svg.dart';
+import 'Meditation.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key, required this.title});
@@ -13,8 +12,6 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
-  final player = AudioPlayer();
-  //player.play(AssetSource('sounds/meditation/safe0.mp3'));
 
   void _onItemTapped(int index) {
     setState(() {
@@ -31,22 +28,8 @@ class _HomePageState extends State<HomePage> {
       ),
 
       body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text(
-              'You have pushed the button this many times:',
-            ),
-        Expanded(
-          child:  SvgPicture.asset(
-              'assets/images/ajahn.svg',
-              semanticsLabel: 'Ajahn Brahm',
-              width: MediaQuery.of(context).size.width*0.9,
-            ),
-          ),
-          ],
+        child: const Meditation(),
         ),
-      ),
 
       bottomNavigationBar: BottomNavigationBar(
         items: const <BottomNavigationBarItem>[
