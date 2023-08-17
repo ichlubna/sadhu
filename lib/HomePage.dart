@@ -32,6 +32,7 @@ class _HomePageState extends State<HomePage> {
         ),
 
       bottomNavigationBar: BottomNavigationBar(
+        enableFeedback: false,
         items: const <BottomNavigationBarItem>[
           BottomNavigationBarItem(
             icon: Icon(Icons.self_improvement),

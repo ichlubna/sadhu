@@ -14,10 +14,10 @@ class App extends StatelessWidget {
     return MaterialApp(
       title: 'Sadhu',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.orangeAccent),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.orange),
         useMaterial3: true,
       ),
-      home: const HomePage(title: 'Guided Meditation',),
+      home: const HomePage(title: 'Make peace, be kind, be gentle.',),
     );
   }
 }
