@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:just_audio/just_audio.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:numberpicker/numberpicker.dart';
 import 'package:wakelock/wakelock.dart';
+import 'package:flutter/services.dart' show rootBundle;
+import 'dart:io';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
@@ -14,28 +16,39 @@ class Meditation extends StatefulWidget {
   State<Meditation> createState() =>_MeditationState();
 }
 
+enum GuidanceLevel {minimal, normal, verbose}
+enum PartPosition{beginning, end}
+
 class Part
 {
-  late int priority;
   late String name;
   String asset = "";
   int duration = 0;
-  Part(this.priority, this.name);
+  int time= 0;
+  late PartPosition position = PartPosition.beginning;
+  Part(this.name, this.position);
 }
 
-class ScheduledPart
+class PlanLengths
 {
-  late String asset;
-  late int time;
-  ScheduledPart(this.asset, this.time);
+  int beginningCount = 0;
+  int endCount = 0;
+  int beginningDuration = 0;
+  int endDuration = 0;
 }
 
 class _MeditationState extends State<Meditation> {
   int _minutesLength = 30;
   late int _secondsLength;
   int _currentTime = 0;
-  double _silence = 50;
   double _percentTime = 0;
+  int _guidanceLevel = 1;
+  double _guidanceLevelSlider = 1;
+  int _speechPauseLevel = 1;
+  double _speechPauseLevelSlider = 1;
+  int _meditationType = 0;
+  static const int _minimalPause = 2;
+  static const int _beginningSilence = 4;
   bool _meditating = false;
   bool _paused = false;
   bool _muted = false;
@@ -44,45 +57,12 @@ class _MeditationState extends State<Meditation> {
   var _player = AudioPlayer();
   late Timer _timer;
   static const _second = Duration(seconds: 1);
-  List<ScheduledPart> _plan = [];
+  List<Part> _plan = [];
   int _partsPlayed = 0;
-
-  //TODO move to json file
-  //Priority = 0 means that the part will always be played
-  static List<Part> _meditationPartsTemplate = [
-    Part(0,"intro"),
-    Part(0,"posture"),
-    Part(1,"bodyCheck"),
-    Part(1,"legsA"),
-    Part(1,"legsB"),
-    Part(1,"legsC"),
-    Part(1,"legsD"),
-    Part(1,"bodyA"),
-    Part(1,"bodyB"),
-    Part(1,"bodyC"),
-    Part(1,"handsA"),
-    Part(1,"handsB"),
-    Part(1,"handsC"),
-    Part(1,"headA"),
-    Part(1,"headB"),
-    Part(2,"aches"),
-    Part(2,"safe"),
-    Part(1,"mind"),
-    Part(2,"aware"),
-    Part(2,"care"),
-    Part(2,"kindfull"),
-    Part(2,"moment"),
-    Part(2,"joy"),
-    Part(0,"quiet")
-  ];
-  static List<Part> _endPartsTemplate = [
-    Part(0,"closeToEnd"),
-    Part(0,"ringGong"),
-    Part(0,"gong"),
-    Part(0,"gong"),
-    Part(0,"gong"),
-    Part(0,"smile"),
-  ];
+  static const List<String> _guidanceLevelLabels = ["Minimal", "Normal", "Verbose"];
+  static const List<String> _guidanceLevelFiles = ["minimal", "normal", "verbose"];
+  static const List<String> _speechPauselLabels = ["Short", "Normal", "Long"];
+  static const List<String> _meditationTypes = ["classic"];
 
   Future listAssets() async
   {
@@ -91,100 +71,90 @@ class _MeditationState extends State<Meditation> {
     return result;
   }
 
-  void initList(List<Part> parts) async
+  Future getFileAsList(String filename) async
+  {
+    var fileContent = await rootBundle.loadString(filename);
+    List<String> lines = fileContent.split('\n');
+    return lines;
+  }
+
+  Future loadMeditationToPlan() async
+  {
+    var lines = await getFileAsList("assets/meditationPlans/"+_meditationTypes[_meditationType]+"-"+_guidanceLevelFiles[_guidanceLevel]);
+    for(final line in lines)
+      if(line != null && line.trim() != '')
+        _plan.add(Part(line, PartPosition.beginning));
+
+      lines =  await getFileAsList("assets/meditationPlans/"+_meditationTypes[_meditationType]+"-end");
+      for(final line in lines)
+        if(line != null && line.trim() != '')
+          _plan.add(Part(line, PartPosition.end));
+  }
+
+  Future initPlanAssets() async
   {
     Map<String, dynamic> assets = await listAssets();
-    for(final part in parts)
+    for(final part in _plan)
     {
       List<String> filtered = assets.keys.where((String key) => key.contains(part.name)).toList();
       int id = Random().nextInt(filtered.length);
-      part.asset=(filtered[id]);
-      var player = AudioPlayer();
-      final duration = await player.setAsset(part.asset);
-      player.dispose();
+      part.asset=(filtered[id]).replaceAll("assets/", "");
+      var player =  AudioPlayer();
+      await player.setSourceAsset(part.asset);
+      final duration = await player.getDuration();
       part.duration = duration!.inSeconds;
     }
   }
 
-  int getMaxPriority(List<Part> parts)
+  PlanLengths getPlanLengths()
   {
-    int maxPriority = 0;
-    for(final part in parts)
-      if(maxPriority < part.priority)
-        maxPriority = part.priority;
-    return maxPriority;
-  }
-
-  int getTotalDuration(List<Part> parts)
-  {
-    int total = 0;
-    for(final part in parts)
-      total += part.duration;
-    return total;
-  }
-
-  void shrinkList(List<Part> parts, int targetDuration) async
-  {
-    int previousLength = parts.length+1;
-    int partsDuration = getTotalDuration(parts);
-    int maxPriority = getMaxPriority(parts);
-    while(previousLength > parts.length && partsDuration > targetDuration)
-    {
-      List<int> priorityParts = [];
-      previousLength = parts.length;
-      for(int priority=maxPriority; priority>=1; priority--)
+    var lengths = PlanLengths();
+    for(final part in _plan)
+      if(part.position == PartPosition.beginning)
       {
-        for(int i=0; i<parts.length; i++)
-          if(parts[i].priority == priority)
-            priorityParts.add(i);
-        if(priorityParts.isNotEmpty)
-          break;
+        lengths.beginningCount++;
+        lengths.beginningDuration += part.duration;
       }
-      if(priorityParts.isNotEmpty) {
-        int toRemoveNumber = Random().nextInt(priorityParts.length);
-        int id = priorityParts[toRemoveNumber];
-        partsDuration -= parts[id].duration;
-        parts.removeAt(id);
+      else if(part.position == PartPosition.end)
+      {
+        lengths.endCount++;
+        lengths.endDuration += part.duration;
       }
-    }
+    return lengths;
   }
 
-  List<ScheduledPart> schedule(List<Part> guidedParts, int guidedDuration, List<Part> endParts)
+  void schedulePlan()
   {
-    List<ScheduledPart> scheduled = [];
-    int guidanceTime = getTotalDuration(guidedParts);
-    int space = ((guidedDuration-guidanceTime)/guidedParts.length).round();
-    int currentPosition = 0;
-    for(final part in guidedParts)
+    int space = _minimalPause+_speechPauseLevel;
+    var lengths = getPlanLengths();
+    int beginningPosition = _beginningSilence;
+    int endPosition = _secondsLength-lengths.endCount*space-lengths.endDuration;
+    for(final part in _plan)
     {
-       currentPosition += space;
-       scheduled.add(ScheduledPart(part.asset, currentPosition));
-       currentPosition += part.duration;
+      if(part.position == PartPosition.beginning)
+      {
+        part.time = beginningPosition;
+        beginningPosition += part.duration+space;
+      }
+      else if(part.position == PartPosition.end)
+      {
+        part.time = endPosition;
+        endPosition += part.duration+space;
+      }
+      print(part.asset);
+      print(part.name);
+      print(part.time);
     }
-    currentPosition = _secondsLength - getTotalDuration(endParts) - endParts.length*space;
-    for(final part in endParts)
-    {
-      currentPosition += space;
-      scheduled.add(ScheduledPart(part.asset, currentPosition));
-      currentPosition += part.duration;
-    }
-
-    return scheduled;
-
   }
 
   void updateMeditation() {
+    if(_paused)
+      return;
     var nextPart = _plan[_partsPlayed];
-    print("STEP");
-    print(nextPart.time);
-    print(_currentTime);
     if (nextPart.time == _currentTime) {
-      var player = AudioPlayer();
-      player.setAsset(nextPart.asset);
-      player.play();
-      player.dispose();
-      //_player.setAsset(nextPart.asset);
-      //_player.play();
+      _player = AudioPlayer();
+      _player.play(AssetSource(nextPart.asset));
+      _player.release();
       _partsPlayed++;
     }
     _currentTime++;
@@ -193,18 +163,15 @@ class _MeditationState extends State<Meditation> {
 
   void startMeditation() async
   {
+    _guidanceLevelSlider = (_minutesLength < 15) ? 0 : _guidanceLevelSlider;
     _secondsLength = _minutesLength*60;
-    int guidanceReservedTime = (_secondsLength * (_silence/100.0)).round();
-    var guidedParts = List<Part>.from(_meditationPartsTemplate);
-    initList(guidedParts);
-    shrinkList(guidedParts, guidanceReservedTime);
-    var endParts = List<Part>.from(_endPartsTemplate);
-    initList(endParts);
-    _plan = schedule(guidedParts, guidanceReservedTime, endParts);
+    await loadMeditationToPlan();
+    await initPlanAssets();
+    schedulePlan();
 
     _meditating = true;
     _partsPlayed = 0;
-    Wakelock.enable();
+    await Wakelock.enable();
 
     //await Future.delayed(const Duration(seconds: 2), (){});
     _timer = Timer.periodic(_second,
@@ -225,6 +192,7 @@ class _MeditationState extends State<Meditation> {
 
   void stopMeditation()
   {
+    _plan = [];
     _meditating = false;
     _player.stop();
     _timer.cancel();
@@ -253,11 +221,12 @@ class _MeditationState extends State<Meditation> {
   {
     _paused = !_paused;
     if(_paused) {
-      _player.stop();
+      _player.pause();
       Wakelock.disable();
       _pauseButtonLabel = "Resume";
     }
     else {
+      _player.resume();
       Wakelock.enable();
       _pauseButtonLabel = "Pause";
     }
@@ -310,7 +279,7 @@ class _MeditationState extends State<Meditation> {
           ]
         else ...
           [
-            const Text("Select the duration of the meditation:"),
+            const Text("Duration of the meditation:"),
             NumberPicker(
               value: _minutesLength,
               minValue: 5,
@@ -322,18 +291,35 @@ class _MeditationState extends State<Meditation> {
               });},
             ),
             const Text(
-                "Select the length of the silent part with no guidance:"),
+                "Amount of guidance:"),
             Padding(
               padding: const EdgeInsets.all(5.0),
               child:
               Slider(
-                  value: _silence,
-                  max: 95,
-                  divisions: 100,
-                  label: _silence.round().toString() + "%",
+                  value: (_minutesLength < 15) ? 0 : _guidanceLevelSlider,
+                  max: 2,
+                  divisions: 2,
+                  label: _guidanceLevelLabels[_guidanceLevel],
                   onChanged: (double value) { setState(() {
-                      _silence = value;
+                    _guidanceLevelSlider = value;
+                    _guidanceLevel = value.round();
                     });}
+              ),
+            ),
+            const Text(
+                "Length of pauses between speech:"),
+            Padding(
+              padding: const EdgeInsets.all(5.0),
+              child:
+              Slider(
+                  value: _speechPauseLevelSlider,
+                  max: 2,
+                  divisions: 2,
+                  label:  _speechPauselLabels[_speechPauseLevel],
+                  onChanged: (double value) { setState(() {
+                    _speechPauseLevelSlider = value;
+                    _speechPauseLevel = value.round();
+                  });}
               ),
             ),
             FilledButton(onPressed: () => {startMeditation()},

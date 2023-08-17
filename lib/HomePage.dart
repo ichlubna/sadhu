@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'Meditation.dart';
+import 'Sutta.dart';
+import 'Resources.dart';
+import 'Quotes.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key, required this.title});
@@ -11,6 +14,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  List<Widget> _sections = [Meditation(), Sutta(), Quotes(), Resources()];
   int _selectedIndex = 0;
 
   void _onItemTapped(int index) {
@@ -28,7 +32,7 @@ class _HomePageState extends State<HomePage> {
       ),
 
       body: Center(
-        child: const Meditation(),
+        child: _sections[_selectedIndex]
         ),
 
       bottomNavigationBar: BottomNavigationBar(
